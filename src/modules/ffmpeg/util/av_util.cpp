@@ -41,17 +41,21 @@ core::mutable_frame make_frame(void*                    tag,
                                std::shared_ptr<AVFrame> video,
                                std::shared_ptr<AVFrame> audio)
 {
+    std::vector<int> data_map; // TODO(perf) when using data_map, avoid uploading duplicate planes
+
     const auto pix_desc =
-        video ? pixel_format_desc(static_cast<AVPixelFormat>(video->format), video->width, video->height)
+        video ? pixel_format_desc(static_cast<AVPixelFormat>(video->format), video->width, video->height, data_map)
               : core::pixel_format_desc(core::pixel_format::invalid);
 
     auto frame = frame_factory.create_frame(tag, pix_desc);
 
     if (video) {
         for (int n = 0; n < static_cast<int>(pix_desc.planes.size()); ++n) {
+            auto frame_plan_index = data_map.empty() ? n : data_map.at(n);
+
             tbb::parallel_for(0, pix_desc.planes[n].height, [&](int y) {
                 std::memcpy(frame.image_data(n).begin() + y * pix_desc.planes[n].linesize,
-                            video->data[n] + y * video->linesize[n],
+                            video->data[frame_plan_index] + y * video->linesize[frame_plan_index],
                             pix_desc.planes[n].linesize);
             });
         }
@@ -105,12 +109,14 @@ core::pixel_format get_pixel_format(AVPixelFormat pix_fmt)
             return core::pixel_format::ycbcra;
         case AV_PIX_FMT_YUVA444P:
             return core::pixel_format::ycbcra;
+        case AV_PIX_FMT_UYVY422:
+            return core::pixel_format::uyvy;
         default:
             return core::pixel_format::invalid;
     }
 }
 
-core::pixel_format_desc pixel_format_desc(AVPixelFormat pix_fmt, int width, int height)
+core::pixel_format_desc pixel_format_desc(AVPixelFormat pix_fmt, int width, int height, std::vector<int>& data_map)
 {
     // Get linesizes
     AVPicture dummy_pict;
@@ -148,6 +154,16 @@ core::pixel_format_desc pixel_format_desc(AVPixelFormat pix_fmt, int width, int 
 
             if (desc.format == core::pixel_format::ycbcra)
                 desc.planes.push_back(core::pixel_format_desc::plane(dummy_pict.linesize[3], height, 1));
+
+            return desc;
+        }
+        case core::pixel_format::uyvy: {
+            desc.planes.push_back(core::pixel_format_desc::plane(dummy_pict.linesize[0] / 2, height, 2));
+            desc.planes.push_back(core::pixel_format_desc::plane(dummy_pict.linesize[0] / 4, height, 4));
+
+            data_map.clear();
+            data_map.push_back(0);
+            data_map.push_back(0);
 
             return desc;
         }
@@ -237,20 +253,32 @@ std::shared_ptr<AVFrame> make_av_video_frame(const core::const_frame& frame, con
     return av_frame;
 }
 
-std::shared_ptr<AVFrame> make_av_audio_frame(const core::const_frame& frame, const core::video_format_desc& format_desc)
+std::shared_ptr<AVFrame> make_av_audio_frame(const core::const_frame& frame, const core::video_format_desc& format_desc, int channel_index)
 {
     auto av_frame = alloc_frame();
 
     const auto& buffer = frame.audio_data();
-
-    // TODO (fix) Use sample_format_desc.
-    av_frame->channels       = format_desc.audio_channels;
-    av_frame->channel_layout = av_get_default_channel_layout(av_frame->channels);
-    av_frame->sample_rate    = format_desc.audio_sample_rate;
+    int src_channels = format_desc.audio_channels;
+    
+    // XDCAM HD422: extrair apenas 1 canal (mono)
+    av_frame->channels       = 1;
+    av_frame->channel_layout = AV_CH_LAYOUT_MONO;
+    av_frame->sample_rate    = 48000;
     av_frame->format         = AV_SAMPLE_FMT_S32;
-    av_frame->nb_samples     = static_cast<int>(buffer.size() / av_frame->channels);
+    av_frame->nb_samples     = static_cast<int>(buffer.size() / src_channels);
     FF(av_frame_get_buffer(av_frame.get(), 32));
-    std::memcpy(av_frame->data[0], buffer.data(), buffer.size() * sizeof(buffer.data()[0]));
+
+    auto src = reinterpret_cast<const int32_t*>(buffer.data());
+    auto dst = reinterpret_cast<int32_t*>(av_frame->data[0]);
+    
+    // Extrair apenas o canal especificado (ou silêncio se inválido/não existir)
+    for (int i = 0; i < av_frame->nb_samples; ++i) {
+        if (channel_index >= 0 && channel_index < src_channels) {
+            dst[i] = src[i * src_channels + channel_index];
+        } else {
+            dst[i] = 0;  // Silêncio para canais inválidos ou que não existem
+        }
+    }
 
     return av_frame;
 }

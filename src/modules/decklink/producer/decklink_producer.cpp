@@ -98,13 +98,14 @@ struct Filter
                 filter_spec = "null";
             }
 
-            bool        doScale = dm->GetHeight() != format_desc.height || dm->GetWidth() != format_desc.width;
+            bool                 doScale = dm->GetHeight() != format_desc.height || dm->GetWidth() != format_desc.width;
             boost::rational<int> bmdFramerate(
                 timeScale / 1000 * (dm->GetFieldDominance() == bmdProgressiveFrame ? 1 : 2), frameDuration / 1000);
             bool doFps = bmdFramerate != format_desc.framerate;
             bool i2p   = (dm->GetFieldDominance() != bmdProgressiveFrame) && (1 == format_desc.field_count);
 
-            std::string deintStr = (doScale || doFps || i2p) ? ",bwdif=mode=send_field" : ",yadif=mode=send_field_nospatial";
+            std::string deintStr =
+                (doScale || doFps || i2p) ? ",bwdif=mode=send_field" : ",yadif=mode=send_field_nospatial";
             switch (dm->GetFieldDominance()) {
                 case bmdUpperFieldFirst:
                     filter_spec += deintStr + ":parity=tff:deint=all";
@@ -233,7 +234,7 @@ struct Filter
 #pragma warning(push)
 #pragma warning(disable : 4245)
 #endif
-            AVPixelFormat pix_fmts[] = {AV_PIX_FMT_YUV422P, AV_PIX_FMT_NONE};
+            AVPixelFormat pix_fmts[] = {AV_PIX_FMT_UYVY422, AV_PIX_FMT_NONE};
             FF(av_opt_set_int_list(sink, "pix_fmts", pix_fmts, -1, AV_OPT_SEARCH_CHILDREN));
 #ifdef _MSC_VER
 #pragma warning(pop)
@@ -404,8 +405,8 @@ class decklink_producer : public IDeckLinkInputCallback
     }
 
     HRESULT STDMETHODCALLTYPE QueryInterface(REFIID, LPVOID*) override { return E_NOINTERFACE; }
-    ULONG STDMETHODCALLTYPE   AddRef() override { return 1; }
-    ULONG STDMETHODCALLTYPE   Release() override { return 1; }
+    ULONG STDMETHODCALLTYPE AddRef() override { return 1; }
+    ULONG STDMETHODCALLTYPE Release() override { return 1; }
 
     HRESULT STDMETHODCALLTYPE VideoInputFormatChanged(BMDVideoInputFormatChangedEvents notificationEvents,
                                                       IDeckLinkDisplayMode*            newDisplayMode,
@@ -591,7 +592,7 @@ class decklink_producer : public IDeckLinkInputCallback
                 auto video_tb = av_buffersink_get_time_base(video_filter_.sink);
                 auto audio_tb = av_buffersink_get_time_base(audio_filter_.sink);
 
-                CASPAR_LOG(debug) << av_video->pts << " " << av_audio->pts;
+                // CASPAR_LOG(trace) << "decklink a/v pts:" << av_video->pts << " " << av_audio->pts;
 
                 auto in_sync = static_cast<double>(in_video_pts) / AV_TIME_BASE -
                                static_cast<double>(in_audio_pts) / format_desc_.audio_sample_rate;
@@ -599,12 +600,12 @@ class decklink_producer : public IDeckLinkInputCallback
                                 static_cast<double>(av_audio->pts * video_tb.num) / audio_tb.den;
 
                 if (std::abs(in_sync - in_sync_) > 0.01) {
-                    CASPAR_LOG(warning) << print() << " in-sync changed: " << in_sync;
+                    CASPAR_LOG(trace) << print() << " in-sync changed: " << in_sync;
                 }
                 in_sync_ = in_sync;
 
                 if (std::abs(out_sync - out_sync_) > 0.01) {
-                    CASPAR_LOG(warning) << print() << " out-sync changed: " << out_sync;
+                    CASPAR_LOG(trace) << print() << " out-sync changed: " << out_sync;
                 }
                 out_sync_ = out_sync;
 
