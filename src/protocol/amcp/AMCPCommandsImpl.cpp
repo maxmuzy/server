@@ -498,7 +498,7 @@ std::wstring data_list_command(command_context& ctx)
         sub_directory = ctx.parameters.at(0);
 
     std::wstringstream replyString;
-    replyString << L"200 DATA LIST OK\r\n";
+    int                fileCount = 0;
 
     for (boost::filesystem::recursive_directory_iterator itr(get_sub_directory(env::data_folder(), sub_directory)), end;
          itr != end;
@@ -514,10 +514,17 @@ std::wstring data_list_command(command_context& ctx)
                 str = std::wstring(str.begin() + 1, str.end());
 
             replyString << str << L"\r\n";
+            fileCount++;
         }
     }
 
-    replyString << L"\r\n";
+    if (fileCount == 0) {
+        // return 404 response if no files were found
+        replyString.str(L"404 NOT FOUND\r\n\r\n");
+    } else {
+        replyString << L"\r\n";
+        replyString.str(L"200 DATA LIST OK\r\n" + replyString.str());
+    }
 
     return boost::to_upper_copy(replyString.str());
 }
